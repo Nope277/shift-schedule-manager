@@ -44,7 +44,12 @@
     <header class="flex items-center justify-between p-4 bg-white shadow-sm shrink-0 z-40 relative">
         <div>
             <h1 class="text-xl font-bold text-gray-800">월간 교대근무 편성표 (실시간 동기화)</h1>
-            <p id="syncStatus" class="text-xs text-blue-600 mt-1 font-bold">🔄 Firebase 연결 대기 중...</p>
+            <div class="flex items-center gap-2 mt-1">
+                <p id="syncStatus" class="text-xs text-blue-600 font-bold">🔄 Firebase 연결 중...</p>
+                <button onclick="importLocalDataToCloud()" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 font-semibold px-2 py-0.5 rounded border border-amber-300 transition-colors" title="이전 HTML 파일에서 수정했던 내역을 클라우드로 복사합니다">
+                    📥 이전 로컬 데이터 클라우드로 올리기
+                </button>
+            </div>
         </div>
         <div class="flex items-center space-x-4">
             <button onclick="changeMonth(-1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold transition-colors text-sm">&lt; 이전</button>
@@ -178,16 +183,17 @@
 
     <script>
         // ==========================================
-        // 🛠️ FIREBASE 설정 (본인의 파이어베이스 설정으로 덮어쓰세요)
+        // 🛠️ FIREBASE 설정
         // ==========================================
         const firebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_AUTH_DOMAIN",
-            projectId: "YOUR_PROJECT_ID",
-            storageBucket: "YOUR_STORAGE_BUCKET",
-            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-            appId: "YOUR_APP_ID"
+            apiKey: "AIzaSyB3OZCU4oCVcdjeyyCFAVgOCV5fFUOxKSU",
+            authDomain: "shift-schedule-manager-98f54.firebaseapp.com",
+            projectId: "shift-schedule-manager-98f54",
+            storageBucket: "shift-schedule-manager-98f54.firebasestorage.app",
+            messagingSenderId: "817412179156",
+            appId: "1:817412179156:web:61aaca974d4b8699aa2741"
         };
+        
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
 
@@ -206,21 +212,24 @@
 
         // Firebase 실시간 동기화 리스너
         db.collection("shiftApp").doc("mainData").onSnapshot((doc) => {
+            isDataLoaded = true;
+
             if (doc.exists) {
                 const data = doc.data();
                 state.employees = data.employees || {};
                 state.overrides = data.overrides || {};
-                document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
             } else {
                 TEAMS.forEach(team => {
                     state.employees[team] = Array.from({length: 22}, (_, i) => `${team}조 사원${i+1}`);
                 });
                 syncToFirebase();
             }
-            isDataLoaded = true;
+
+            document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
             render();
         }, (error) => {
-            document.getElementById('syncStatus').innerText = "🔴 클라우드 연결 오류 (설정을 확인하세요)";
+            console.error("Firebase 연결 에러:", error);
+            document.getElementById('syncStatus').innerText = `🔴 클라우드 연결 오류: ${error.message}`;
         });
 
         // Firebase에 데이터 저장 함수
@@ -231,6 +240,29 @@
                 overrides: state.overrides
             }, { merge: true });
         }
+
+        // 📥 이전 브라우저의 로컬 데이터를 클라우드로 가져오기 함수
+        window.importLocalDataToCloud = function() {
+            const localEmployees = localStorage.getItem('shiftEmployees');
+            const localOverrides = localStorage.getItem('shiftOverrides');
+
+            if (!localEmployees && !localOverrides) {
+                alert("이 브라우저에 저장된 이전 로컬 데이터가 없습니다.\n\n이전에 파일로 열어 수정을 진행하셨던 동일한 브라우저에서 버튼을 눌러주세요.");
+                return;
+            }
+
+            if (confirm("이 브라우저에 저장되어 있던 이전 수정 내역(사원 명단 및 근무/연차/대근 변경사항)을 파이어베이스 클라우드로 업로드하시겠습니까?")) {
+                try {
+                    if (localEmployees) state.employees = JSON.parse(localEmployees);
+                    if (localOverrides) state.overrides = JSON.parse(localOverrides);
+
+                    syncToFirebase();
+                    alert("✅ 이전 로컬 데이터가 성공적으로 파이어베이스 클라우드에 업로드 되었습니다!\n\n이제 다른 팀원들과도 수정된 내역이 실시간으로 공유됩니다.");
+                } catch (e) {
+                    alert("데이터 가져오기 중 오류가 발생했습니다: " + e.message);
+                }
+            }
+        };
 
         function getDaysDiff(targetDate) {
             const targetUTC = Date.UTC(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
@@ -395,17 +427,3 @@
             const status = document.getElementById('dateBulkSelect').value;
             const extra = parseInt(document.getElementById('dateBulkExtra').value, 10) || 0;
             const teamsToUpdate = targetTeam === 'ALL' ? TEAMS : [targetTeam];
-            teamsToUpdate.forEach(team => {
-                const teamEmployees = state.employees[team] || [];
-                teamEmployees.forEach((_, empIdx) => {
-                    const key = `${team}_${empIdx}_${currentEdit.dateKey}`;
-                    status === 'RESET' ? delete state.overrides[key] : state.overrides[key] = { status, extra };
-                });
-            });
-            syncToFirebase(); closeModal('dateBulkModal');
-        };
-
-        window.closeModal = function(id) { document.getElementById(id).classList.add('hidden'); currentEdit = null; };
-    </script>
-</body>
-</html>

@@ -44,7 +44,7 @@
     <header class="flex items-center justify-between p-4 bg-white shadow-sm shrink-0 z-40 relative">
         <div>
             <h1 class="text-xl font-bold text-gray-800">월간 교대근무 편성표 (실시간 동기화)</h1>
-            <p id="syncStatus" class="text-xs text-blue-600 mt-1 font-bold">🔄 Firebase 연결 중...</p>
+            <p id="syncStatus" class="text-xs text-blue-600 mt-1 font-bold">🔄 Firebase 연결 대기 중...</p>
         </div>
         <div class="flex items-center space-x-4">
             <button onclick="changeMonth(-1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold transition-colors text-sm">&lt; 이전</button>
@@ -178,17 +178,16 @@
 
     <script>
         // ==========================================
-        // 🛠️ FIREBASE 설정
+        // 🛠️ FIREBASE 설정 (본인의 파이어베이스 설정으로 덮어쓰세요)
         // ==========================================
         const firebaseConfig = {
-            apiKey: "AIzaSyB3OZCU4oCVcdjeyyCFAVgOCV5fFUOxKSU",
-            authDomain: "shift-schedule-manager-98f54.firebaseapp.com",
-            projectId: "shift-schedule-manager-98f54",
-            storageBucket: "shift-schedule-manager-98f54.firebasestorage.app",
-            messagingSenderId: "817412179156",
-            appId: "1:817412179156:web:61aaca974d4b8699aa2741"
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
         };
-        
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
 
@@ -207,25 +206,21 @@
 
         // Firebase 실시간 동기화 리스너
         db.collection("shiftApp").doc("mainData").onSnapshot((doc) => {
-            isDataLoaded = true; // 플래그 먼저 업데이트
-
             if (doc.exists) {
                 const data = doc.data();
                 state.employees = data.employees || {};
                 state.overrides = data.overrides || {};
+                document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
             } else {
-                // 파이어베이스가 완전히 비어있는 경우 초기 명단 자동 생성 후 저장
                 TEAMS.forEach(team => {
                     state.employees[team] = Array.from({length: 22}, (_, i) => `${team}조 사원${i+1}`);
                 });
                 syncToFirebase();
             }
-
-            document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
+            isDataLoaded = true;
             render();
         }, (error) => {
-            console.error("Firebase 연결 에러:", error);
-            document.getElementById('syncStatus').innerText = `🔴 클라우드 연결 오류: ${error.message}`;
+            document.getElementById('syncStatus').innerText = "🔴 클라우드 연결 오류 (설정을 확인하세요)";
         });
 
         // Firebase에 데이터 저장 함수

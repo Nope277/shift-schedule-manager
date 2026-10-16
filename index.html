@@ -5,23 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>교대근무 52시간 관리 편성표 (실시간 연동)</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK 추가 -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
     <style>
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         .table-container { overflow-x: auto; overflow-y: auto; max-height: calc(100vh - 100px); }
-        .schedule-table { 
-            border-collapse: separate; 
-            border-spacing: 0; 
-            table-layout: fixed; 
-            width: max-content; 
-        }
-        .schedule-table th, .schedule-table td { 
-            border-bottom: 1px solid #d1d5db; 
-            border-right: 1px solid #d1d5db; 
-            background-color: #fff; 
-        }
+        .schedule-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: max-content; }
+        .schedule-table th, .schedule-table td { border-bottom: 1px solid #d1d5db; border-right: 1px solid #d1d5db; background-color: #fff; }
         .schedule-table thead th { border-top: 1px solid #d1d5db; position: sticky; top: 0; background-color: #f3f4f6; z-index: 20; height: 40px; }
         .schedule-table thead tr:nth-child(2) th { top: 40px; height: 30px; }
         .schedule-table th:first-child, .schedule-table td:first-child { border-left: 1px solid #d1d5db; }
@@ -30,7 +20,6 @@
         .col-day { width: 44px; min-width: 44px; max-width: 44px; }
         .col-week { width: 60px; min-width: 60px; max-width: 60px; }
         .schedule-table thead th.col-team, .schedule-table thead th.col-name { z-index: 30 !important; background-color: #e5e7eb !important; }
-        
         .status-1 { background-color: #dbeafe !important; color: #1e40af; }
         .status-2 { background-color: #fef08a !important; color: #854d0e; }
         .status-3 { background-color: #ffedd5 !important; color: #c2410c; }
@@ -46,8 +35,8 @@
             <h1 class="text-xl font-bold text-gray-800">월간 교대근무 편성표 (실시간 동기화)</h1>
             <div class="flex items-center gap-2 mt-1">
                 <p id="syncStatus" class="text-xs text-blue-600 font-bold">🔄 Firebase 연결 중...</p>
-                <button onclick="importLocalDataToCloud()" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 font-semibold px-2 py-0.5 rounded border border-amber-300 transition-colors" title="이전 HTML 파일에서 수정했던 내역을 클라우드로 복사합니다">
-                    📥 이전 로컬 데이터 클라우드로 올리기
+                <button onclick="forceUploadCurrentData()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-2 py-1 rounded transition-colors shadow-sm">
+                    ⬆️ 이 화면 데이터 클라우드로 강제 전송
                 </button>
             </div>
         </div>
@@ -182,9 +171,6 @@
     </div>
 
     <script>
-        // ==========================================
-        // 🛠️ FIREBASE 설정
-        // ==========================================
         const firebaseConfig = {
             apiKey: "AIzaSyB3OZCU4oCVcdjeyyCFAVgOCV5fFUOxKSU",
             authDomain: "shift-schedule-manager-98f54.firebaseapp.com",
@@ -204,63 +190,41 @@
 
         let state = {
             currentDate: new Date(2026, 9, 1),
-            employees: {},
-            overrides: {}
+            employees: JSON.parse(localStorage.getItem('shiftEmployees')) || {},
+            overrides: JSON.parse(localStorage.getItem('shiftOverrides')) || {}
         };
         let currentEdit = null;
         let isDataLoaded = false;
 
-        // Firebase 실시간 동기화 리스너
         db.collection("shiftApp").doc("mainData").onSnapshot((doc) => {
             isDataLoaded = true;
-
             if (doc.exists) {
                 const data = doc.data();
-                state.employees = data.employees || {};
-                state.overrides = data.overrides || {};
-            } else {
-                TEAMS.forEach(team => {
-                    state.employees[team] = Array.from({length: 22}, (_, i) => `${team}조 사원${i+1}`);
-                });
-                syncToFirebase();
+                // 데이터가 있을 경우 클라우드 데이터로 동기화
+                if (data.employees && Object.keys(data.employees).length > 0) {
+                    state.employees = data.employees;
+                    state.overrides = data.overrides || {};
+                }
             }
-
             document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
             render();
         }, (error) => {
-            console.error("Firebase 연결 에러:", error);
-            document.getElementById('syncStatus').innerText = `🔴 클라우드 연결 오류: ${error.message}`;
+            console.error("Firebase 에러:", error);
+            document.getElementById('syncStatus').innerText = `🔴 클라우드 연결 오류`;
         });
 
-        // Firebase에 데이터 저장 함수
         function syncToFirebase() {
-            if (!isDataLoaded) return;
             db.collection("shiftApp").doc("mainData").set({
                 employees: state.employees,
                 overrides: state.overrides
-            }, { merge: true });
+            }, { merge: true }).then(() => {
+                alert("✅ 현재 화면의 명단과 수정 내역이 파이어베이스 클라우드로 완벽히 업로드 되었습니다!");
+            });
         }
 
-        // 📥 이전 브라우저의 로컬 데이터를 클라우드로 가져오기 함수
-        window.importLocalDataToCloud = function() {
-            const localEmployees = localStorage.getItem('shiftEmployees');
-            const localOverrides = localStorage.getItem('shiftOverrides');
-
-            if (!localEmployees && !localOverrides) {
-                alert("이 브라우저에 저장된 이전 로컬 데이터가 없습니다.\n\n이전에 파일로 열어 수정을 진행하셨던 동일한 브라우저에서 버튼을 눌러주세요.");
-                return;
-            }
-
-            if (confirm("이 브라우저에 저장되어 있던 이전 수정 내역(사원 명단 및 근무/연차/대근 변경사항)을 파이어베이스 클라우드로 업로드하시겠습니까?")) {
-                try {
-                    if (localEmployees) state.employees = JSON.parse(localEmployees);
-                    if (localOverrides) state.overrides = JSON.parse(localOverrides);
-
-                    syncToFirebase();
-                    alert("✅ 이전 로컬 데이터가 성공적으로 파이어베이스 클라우드에 업로드 되었습니다!\n\n이제 다른 팀원들과도 수정된 내역이 실시간으로 공유됩니다.");
-                } catch (e) {
-                    alert("데이터 가져오기 중 오류가 발생했습니다: " + e.message);
-                }
+        window.forceUploadCurrentData = function() {
+            if (confirm("현재 화면에 보이는 명단(신세기, 김진영 님 등)과 수정 내역을 파이어베이스 클라우드로 전송하시겠습니까?\n\n전송 후에는 다른 사람들도 동일한 화면을 보게 됩니다.")) {
+                syncToFirebase();
             }
         };
 
@@ -323,7 +287,6 @@
         }
 
         function render() {
-            if (!isDataLoaded) return;
             const year = state.currentDate.getFullYear();
             const month = state.currentDate.getMonth();
             const daysInMonth = new Date(year, month + 1, 0).getDate();

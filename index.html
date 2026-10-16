@@ -427,3 +427,17 @@
             const status = document.getElementById('dateBulkSelect').value;
             const extra = parseInt(document.getElementById('dateBulkExtra').value, 10) || 0;
             const teamsToUpdate = targetTeam === 'ALL' ? TEAMS : [targetTeam];
+            teamsToUpdate.forEach(team => {
+                const teamEmployees = state.employees[team] || [];
+                teamEmployees.forEach((_, empIdx) => {
+                    const key = `${team}_${empIdx}_${currentEdit.dateKey}`;
+                    status === 'RESET' ? delete state.overrides[key] : state.overrides[key] = { status, extra };
+                });
+            });
+            syncToFirebase(); closeModal('dateBulkModal');
+        };
+
+        window.closeModal = function(id) { document.getElementById(id).classList.add('hidden'); currentEdit = null; };
+    </script>
+</body>
+</html>

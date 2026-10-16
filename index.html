@@ -33,12 +33,7 @@
     <header class="flex items-center justify-between p-4 bg-white shadow-sm shrink-0 z-40 relative">
         <div>
             <h1 class="text-xl font-bold text-gray-800">월간 교대근무 편성표 (실시간 동기화)</h1>
-            <div class="flex items-center gap-2 mt-1">
-                <p id="syncStatus" class="text-xs text-blue-600 font-bold">🔄 Firebase 연결 중...</p>
-                <button onclick="forceUploadCurrentData()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-2 py-1 rounded transition-colors shadow-sm">
-                    ⬆️ 이 화면 데이터 클라우드로 강제 전송
-                </button>
-            </div>
+            <p id="syncStatus" class="text-xs text-blue-600 mt-1 font-bold">🔄 Firebase 연결 중...</p>
         </div>
         <div class="flex items-center space-x-4">
             <button onclick="changeMonth(-1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold transition-colors text-sm">&lt; 이전</button>
@@ -190,8 +185,8 @@
 
         let state = {
             currentDate: new Date(2026, 9, 1),
-            employees: JSON.parse(localStorage.getItem('shiftEmployees')) || {},
-            overrides: JSON.parse(localStorage.getItem('shiftOverrides')) || {}
+            employees: {},
+            overrides: {}
         };
         let currentEdit = null;
         let isDataLoaded = false;
@@ -200,7 +195,6 @@
             isDataLoaded = true;
             if (doc.exists) {
                 const data = doc.data();
-                // 데이터가 있을 경우 클라우드 데이터로 동기화
                 if (data.employees && Object.keys(data.employees).length > 0) {
                     state.employees = data.employees;
                     state.overrides = data.overrides || {};
@@ -209,24 +203,16 @@
             document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
             render();
         }, (error) => {
-            console.error("Firebase 에러:", error);
             document.getElementById('syncStatus').innerText = `🔴 클라우드 연결 오류`;
         });
 
         function syncToFirebase() {
+            if (!isDataLoaded) return;
             db.collection("shiftApp").doc("mainData").set({
                 employees: state.employees,
                 overrides: state.overrides
-            }, { merge: true }).then(() => {
-                alert("✅ 현재 화면의 명단과 수정 내역이 파이어베이스 클라우드로 완벽히 업로드 되었습니다!");
-            });
+            }, { merge: true });
         }
-
-        window.forceUploadCurrentData = function() {
-            if (confirm("현재 화면에 보이는 명단(신세기, 김진영 님 등)과 수정 내역을 파이어베이스 클라우드로 전송하시겠습니까?\n\n전송 후에는 다른 사람들도 동일한 화면을 보게 됩니다.")) {
-                syncToFirebase();
-            }
-        };
 
         function getDaysDiff(targetDate) {
             const targetUTC = Date.UTC(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
@@ -287,6 +273,7 @@
         }
 
         function render() {
+            if (!isDataLoaded) return;
             const year = state.currentDate.getFullYear();
             const month = state.currentDate.getMonth();
             const daysInMonth = new Date(year, month + 1, 0).getDate();

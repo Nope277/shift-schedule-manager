@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>교대근무 52시간 관리 편성표 (실시간 연동)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK 추가 -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .table-container { overflow-x: auto; overflow-y: auto; max-height: calc(100vh - 100px); }
+        .schedule-table { 
+            border-collapse: separate; 
+            border-spacing: 0; 
+            table-layout: fixed; 
+            width: max-content; 
+        }
+        .schedule-table th, .schedule-table td { 
+            border-bottom: 1px solid #d1d5db; 
+            border-right: 1px solid #d1d5db; 
+            background-color: #fff; 
+        }
+        .schedule-table thead th { border-top: 1px solid #d1d5db; position: sticky; top: 0; background-color: #f3f4f6; z-index: 20; height: 40px; }
+        .schedule-table thead tr:nth-child(2) th { top: 40px; height: 30px; }
+        .schedule-table th:first-child, .schedule-table td:first-child { border-left: 1px solid #d1d5db; }
+        .col-team { position: sticky !important; left: 0; z-index: 10; width: 70px; min-width: 70px; max-width: 70px; background-color: #f9fafb !important; }
+        .col-name { position: sticky !important; left: 70px; z-index: 10; width: 120px; min-width: 120px; max-width: 120px; background-color: #ffffff !important; border-right: 2px solid #9ca3af !important; box-shadow: 2px 0 5px -2px rgba(0,0,0,0.15); }
+        .col-day { width: 44px; min-width: 44px; max-width: 44px; }
+        .col-week { width: 60px; min-width: 60px; max-width: 60px; }
+        .schedule-table thead th.col-team, .schedule-table thead th.col-name { z-index: 30 !important; background-color: #e5e7eb !important; }
+        
+        .status-1 { background-color: #dbeafe !important; color: #1e40af; }
+        .status-2 { background-color: #fef08a !important; color: #854d0e; }
+        .status-3 { background-color: #ffedd5 !important; color: #c2410c; }
+        .status-휴 { background-color: #f3f4f6 !important; color: #6b7280; }
+        .status-연 { background-color: #bbf7d0 !important; color: #166534; font-weight: bold; }
+        .status-대 { background-color: #fecaca !important; color: #991b1b; font-weight: bold; }
+    </style>
+</head>
+<body class="bg-gray-50 flex flex-col h-screen overflow-hidden">
+
+    <header class="flex items-center justify-between p-4 bg-white shadow-sm shrink-0 z-40 relative">
+        <div>
+            <h1 class="text-xl font-bold text-gray-800">월간 교대근무 편성표 (실시간 동기화)</h1>
+            <p id="syncStatus" class="text-xs text-blue-600 mt-1 font-bold">🔄 Firebase 연결 대기 중...</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <button onclick="changeMonth(-1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold transition-colors text-sm">&lt; 이전</button>
+            <span id="currentMonthDisplay" class="text-lg font-bold min-w-[130px] text-center">2026년 10월</span>
+            <button onclick="changeMonth(1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold transition-colors text-sm">다음 &gt;</button>
+        </div>
+    </header>
+
+    <div class="flex-1 table-container m-4 shadow bg-white border border-gray-300 rounded-sm">
+        <table class="schedule-table text-sm text-center">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <!-- 근무 수정 모달 -->
+    <div id="shiftModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-80 relative">
+            <h2 id="shiftModalTitle" class="text-lg font-bold mb-4 border-b pb-2">근무 수정</h2>
+            <div class="space-y-4">
+                <div class="flex space-x-2 items-center mb-2">
+                    <div class="flex-1">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+                        <input type="text" id="shiftStartDate" class="w-full border border-gray-300 rounded p-2 bg-gray-100 text-sm text-center" disabled />
+                    </div>
+                    <span class="pt-5 text-gray-500 font-bold">~</span>
+                    <div class="flex-1">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+                        <input type="date" id="shiftEndDate" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-sm cursor-pointer" />
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">근무 상태</label>
+                    <select id="shiftSelect" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-base">
+                        <option value="1">1근 (8h)</option>
+                        <option value="2">2근 (8h)</option>
+                        <option value="3">3근 (8h)</option>
+                        <option value="휴">휴무 (0h)</option>
+                        <option value="연">연차 (0h)</option>
+                        <option value="대">대근 (8h)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">연장 근무 시간 추가 (+h)</label>
+                    <input type="number" id="extraHoursInput" min="0" max="16" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-base" value="0"/>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-2">
+                <button onclick="closeModal('shiftModal')" class="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">취소</button>
+                <button onclick="saveShift()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 이름 수정 모달 -->
+    <div id="nameModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-80 relative">
+            <h2 class="text-lg font-bold mb-4 border-b pb-2">이름 수정</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">사원 이름</label>
+                    <input type="text" id="nameInput" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-base" />
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-2">
+                <button onclick="closeModal('nameModal')" class="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">취소</button>
+                <button onclick="saveName()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일괄 붙여넣기 모달 -->
+    <div id="pasteModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-96 relative">
+            <h2 id="pasteModalTitle" class="text-lg font-bold mb-4 border-b pb-2">명단 일괄 붙여넣기</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">엑셀에서 복사한 이름들을 붙여넣으세요.</label>
+                    <textarea id="pasteInput" rows="10" class="w-full border border-gray-300 rounded p-2 focus:ring-green-500 text-sm whitespace-pre" placeholder="홍길동&#10;김철수..."></textarea>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-2">
+                <button onclick="closeModal('pasteModal')" class="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">취소</button>
+                <button onclick="savePaste()" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">명단 적용</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 날짜 일괄 변경 모달 -->
+    <div id="dateBulkModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-80 relative">
+            <h2 class="text-lg font-bold mb-4 border-b pb-2">일자별 일괄 근무 변경</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">선택 일자</label>
+                    <input type="text" id="dateBulkTarget" class="w-full border border-gray-300 rounded p-2 bg-gray-100 text-sm text-center font-bold" disabled />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">적용 대상</label>
+                    <select id="dateBulkTeam" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-base">
+                        <option value="ALL">전체 조</option>
+                        <option value="A">A조 전체</option>
+                        <option value="B">B조 전체</option>
+                        <option value="C">C조 전체</option>
+                        <option value="D">D조 전체</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">변경할 근무 상태</label>
+                    <select id="dateBulkSelect" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-base">
+                        <option value="휴">휴무 (0h)</option>
+                        <option value="연">연차 (0h)</option>
+                        <option value="1">1근 (8h)</option>
+                        <option value="2">2근 (8h)</option>
+                        <option value="3">3근 (8h)</option>
+                        <option value="대">대근 (8h)</option>
+                        <option value="RESET" class="text-red-600 font-bold">기본 편성표로 초기화 (리셋)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">연장 추가 (+h)</label>
+                    <input type="number" id="dateBulkExtra" min="0" max="16" class="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 text-base" value="0"/>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-2">
+                <button onclick="closeModal('dateBulkModal')" class="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">취소</button>
+                <button onclick="saveDateBulk()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">일괄 적용</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 🛠️ FIREBASE 설정 (본인의 파이어베이스 설정으로 덮어쓰세요)
+        // ==========================================
+       const firebaseConfig = {
+  apiKey: "AIzaSyB3OZCU4oCVcdjeyyCFAVgOCV5fFUOxKSU",
+  authDomain: "shift-schedule-manager-98f54.firebaseapp.com",
+  projectId: "shift-schedule-manager-98f54",
+  storageBucket: "shift-schedule-manager-98f54.firebasestorage.app",
+  messagingSenderId: "817412179156",
+  appId: "1:817412179156:web:61aaca974d4b8699aa2741"
+};
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        const PATTERN = [1, 1, 1, 1, '휴', '휴', 3, 3, 3, 3, '휴', 2, 2, 2, 2, '휴'];
+        const BASE_DATE_UTC = Date.UTC(2026, 9, 1);
+        const TEAM_OFFSETS = { 'A': 9, 'B': 13, 'C': 1, 'D': 5 };
+        const TEAMS = ['A', 'B', 'C', 'D'];
+
+        let state = {
+            currentDate: new Date(2026, 9, 1),
+            employees: {},
+            overrides: {}
+        };
+        let currentEdit = null;
+        let isDataLoaded = false;
+
+        // Firebase 실시간 동기화 리스너
+        db.collection("shiftApp").doc("mainData").onSnapshot((doc) => {
+            if (doc.exists) {
+                const data = doc.data();
+                state.employees = data.employees || {};
+                state.overrides = data.overrides || {};
+                document.getElementById('syncStatus').innerText = "🟢 실시간 동기화 연결됨";
+            } else {
+                TEAMS.forEach(team => {
+                    state.employees[team] = Array.from({length: 22}, (_, i) => `${team}조 사원${i+1}`);
+                });
+                syncToFirebase();
+            }
+            isDataLoaded = true;
+            render();
+        }, (error) => {
+            document.getElementById('syncStatus').innerText = "🔴 클라우드 연결 오류 (설정을 확인하세요)";
+        });
+
+        // Firebase에 데이터 저장 함수
+        function syncToFirebase() {
+            if (!isDataLoaded) return;
+            db.collection("shiftApp").doc("mainData").set({
+                employees: state.employees,
+                overrides: state.overrides
+            }, { merge: true });
+        }
+
+        function getDaysDiff(targetDate) {
+            const targetUTC = Date.UTC(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+            return Math.floor((targetUTC - BASE_DATE_UTC) / 86400000);
+        }
+
+        function getBaseStatus(team, date) {
+            const daysDiff = getDaysDiff(date);
+            const offset = TEAM_OFFSETS[team];
+            const index = ((daysDiff + offset) % 16 + 16) % 16;
+            return PATTERN[index];
+        }
+
+        function formatDateKey(date) {
+            return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        }
+
+        function getWeeksInMonth(year, month) {
+            const weeks = [];
+            let currentWeekStart = new Date(year, month, 1);
+            let day = currentWeekStart.getDay();
+            let diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
+            currentWeekStart.setDate(diff);
+
+            let weekNum = 1;
+            while ((currentWeekStart.getMonth() <= month && currentWeekStart.getFullYear() === year) || 
+                   (currentWeekStart.getMonth() > month && currentWeekStart.getFullYear() < year)) {
+                if (currentWeekStart.getMonth() > month && currentWeekStart.getFullYear() === year) break;
+                if (currentWeekStart.getFullYear() > year) break;
+
+                let currentWeekEnd = new Date(currentWeekStart);
+                currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+                weeks.push({ start: new Date(currentWeekStart), end: new Date(currentWeekEnd), label: `${weekNum}주차` });
+                currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+                weekNum++;
+            }
+            return weeks;
+        }
+
+        function calculateWeeklyHours(team, empIdx, weekStart, weekEnd) {
+            let total = 0;
+            let d = new Date(weekStart);
+            while (d <= weekEnd) {
+                const dateKey = formatDateKey(d);
+                const base = getBaseStatus(team, d);
+                let status = base;
+                let extra = 0;
+                const overrideKey = `${team}_${empIdx}_${dateKey}`;
+                if (state.overrides[overrideKey]) {
+                    status = state.overrides[overrideKey].status;
+                    extra = parseInt(state.overrides[overrideKey].extra, 10) || 0;
+                }
+                if (['1', '2', '3', '대', 1, 2, 3].includes(status)) total += 8;
+                total += extra;
+                d.setDate(d.getDate() + 1);
+            }
+            return total;
+        }
+
+        function render() {
+            if (!isDataLoaded) return;
+            const year = state.currentDate.getFullYear();
+            const month = state.currentDate.getMonth();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const dates = Array.from({length: daysInMonth}, (_, i) => new Date(year, month, i + 1));
+            const weeks = getWeeksInMonth(year, month);
+            const dayNames = ['일','월','화','수','목','금','토'];
+
+            document.getElementById('currentMonthDisplay').innerText = `${year}년 ${month + 1}월`;
+
+            let theadHtml = `<tr><th rowspan="2" class="col-team">조</th><th rowspan="2" class="col-name">이름</th>`;
+            dates.forEach(d => {
+                let color = d.getDay() === 0 ? 'text-red-600' : d.getDay() === 6 ? 'text-blue-600' : '';
+                theadHtml += `<th onclick="openDateBulkModal('${formatDateKey(d)}')" class="col-day p-1 cursor-pointer hover:bg-gray-300 ${color}">${d.getDate()}</th>`;
+            });
+            weeks.forEach(w => { theadHtml += `<th rowspan="2" class="col-week p-1 bg-blue-50 text-xs">${w.label}</th>`; });
+            theadHtml += `</tr><tr>`;
+            dates.forEach(d => {
+                let color = d.getDay() === 0 ? 'text-red-600' : d.getDay() === 6 ? 'text-blue-600' : 'text-gray-600';
+                theadHtml += `<th class="col-day p-1 text-[11px] font-normal ${color}">${dayNames[d.getDay()]}</th>`;
+            });
+            theadHtml += `</tr>`;
+            document.getElementById('tableHead').innerHTML = theadHtml;
+
+            let tbodyHtml = '';
+            TEAMS.forEach(team => {
+                const teamEmployees = state.employees[team] || [];
+                teamEmployees.forEach((empName, empIdx) => {
+                    tbodyHtml += `<tr class="hover:bg-gray-50 transition-colors">`;
+                    if (empIdx === 0) {
+                        tbodyHtml += `<td rowspan="${teamEmployees.length}" class="col-team font-bold align-top pt-4 text-center">${team}조
+                            <button onclick="addEmployee('${team}')" class="block mx-auto mt-2 text-[11px] bg-blue-100 text-blue-700 px-2 py-1 rounded">+1명</button>
+                            <button onclick="openPasteModal('${team}')" class="block mx-auto mt-1 text-[11px] bg-green-100 text-green-700 px-2 py-1 rounded w-full max-w-[40px]">일괄</button>
+                        </td>`;
+                    }
+                    tbodyHtml += `<td class="col-name text-left pl-3 relative group cursor-pointer hover:bg-blue-50">
+                            <span onclick="openNameModal('${team}', ${empIdx}, '${empName}')" class="block w-full text-[13px] truncate pr-4 text-blue-800 hover:underline">${empName}</span>
+                            <button onclick="removeEmployee('${team}', ${empIdx})" class="absolute right-1 top-1.5 text-red-500 hidden group-hover:block text-[10px] bg-red-50 border border-red-200 rounded px-1">X</button>
+                        </td>`;
+                    dates.forEach(d => {
+                        const dateKey = formatDateKey(d);
+                        const overrideKey = `${team}_${empIdx}_${dateKey}`;
+                        const ovr = state.overrides[overrideKey];
+                        const status = ovr ? ovr.status : getBaseStatus(team, d);
+                        const extra = ovr && ovr.extra ? parseInt(ovr.extra, 10) : 0;
+                        let colorClass = `status-${status}`;
+                        if (!colorClass.includes('status-')) colorClass = 'bg-white';
+                        tbodyHtml += `<td onclick="openShiftModal('${team}', ${empIdx}, '${dateKey}', '${status}', ${extra})" class="col-day p-1 text-[13px] font-medium cursor-pointer hover:opacity-75 ${colorClass} relative">
+                                ${status}${extra > 0 ? `<div class="absolute bottom-0 right-0 text-[10px] text-red-600 bg-white/80 rounded px-[2px] font-bold leading-none">+${extra}</div>` : ''}</td>`;
+                    });
+                    weeks.forEach(w => {
+                        const hours = calculateWeeklyHours(team, empIdx, w.start, w.end);
+                        tbodyHtml += `<td class="col-week p-1 text-[12px] font-bold ${hours > 52 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}">${hours}</td>`;
+                    });
+                    tbodyHtml += `</tr>`;
+                });
+            });
+            document.getElementById('tableBody').innerHTML = tbodyHtml;
+        }
+
+        window.changeMonth = function(offset) { state.currentDate.setMonth(state.currentDate.getMonth() + offset); render(); };
+        window.addEmployee = function(team) { state.employees[team].push(`${team}조 신규 인원`); syncToFirebase(); };
+        window.removeEmployee = function(team, idx) { if (confirm(`'${state.employees[team][idx]}' 인원을 삭제하시겠습니까?`)) { state.employees[team].splice(idx, 1); syncToFirebase(); } };
+
+        window.openShiftModal = function(team, empIdx, dateKey, currentStatus, currentExtra) {
+            currentEdit = { type: 'shift', team, empIdx, dateKey };
+            document.getElementById('shiftStartDate').value = dateKey;
+            const endDateInput = document.getElementById('shiftEndDate');
+            endDateInput.value = dateKey; endDateInput.min = dateKey;
+            document.getElementById('shiftSelect').value = currentStatus;
+            document.getElementById('extraHoursInput').value = currentExtra;
+            document.getElementById('shiftModal').classList.remove('hidden');
+        };
+
+        window.saveShift = function() {
+            if (!currentEdit) return;
+            const status = document.getElementById('shiftSelect').value;
+            const extra = parseInt(document.getElementById('extraHoursInput').value, 10) || 0;
+            const sParts = currentEdit.dateKey.split('-');
+            const eParts = document.getElementById('shiftEndDate').value.split('-');
+            if (eParts.length < 3) return alert("종료일을 선택해주세요.");
+            let d = new Date(sParts[0], sParts[1] - 1, sParts[2]);
+            let endD = new Date(eParts[0], eParts[1] - 1, eParts[2]);
+            if (endD < d) return alert("종료일은 시작일보다 빠를 수 없습니다.");
+            while (d <= endD) {
+                state.overrides[`${currentEdit.team}_${currentEdit.empIdx}_${formatDateKey(d)}`] = { status, extra };
+                d.setDate(d.getDate() + 1);
+            }
+            syncToFirebase(); closeModal('shiftModal');
+        };
+
+        window.openNameModal = function(team, empIdx, currentName) { currentEdit = { type: 'name', team, empIdx }; document.getElementById('nameInput').value = currentName; document.getElementById('nameModal').classList.remove('hidden'); };
+        window.saveName = function() { if (!currentEdit) return; const newName = document.getElementById('nameInput').value.trim(); if (newName) { state.employees[currentEdit.team][currentEdit.empIdx] = newName; syncToFirebase(); } closeModal('nameModal'); };
+
+        window.openPasteModal = function(team) { currentEdit = { type: 'paste', team }; document.getElementById('pasteModalTitle').innerText = `${team}조 명단 일괄 붙여넣기`; document.getElementById('pasteInput').value = state.employees[team].join('\n'); document.getElementById('pasteModal').classList.remove('hidden'); };
+        window.savePaste = function() { if (!currentEdit) return; const names = document.getElementById('pasteInput').value.split('\n').map(n => n.trim()).filter(n => n.length > 0); if (names.length > 0) { state.employees[currentEdit.team] = names; syncToFirebase(); closeModal('pasteModal'); } };
+
+        window.openDateBulkModal = function(dateKey) { currentEdit = { type: 'dateBulk', dateKey }; document.getElementById('dateBulkTarget').value = dateKey; document.getElementById('dateBulkTeam').value = 'ALL'; document.getElementById('dateBulkSelect').value = '휴'; document.getElementById('dateBulkExtra').value = '0'; document.getElementById('dateBulkModal').classList.remove('hidden'); };
+        window.saveDateBulk = function() {
+            if (!currentEdit) return;
+            const targetTeam = document.getElementById('dateBulkTeam').value;
+            const status = document.getElementById('dateBulkSelect').value;
+            const extra = parseInt(document.getElementById('dateBulkExtra').value, 10) || 0;
+            const teamsToUpdate = targetTeam === 'ALL' ? TEAMS : [targetTeam];
+            teamsToUpdate.forEach(team => {
+                const teamEmployees = state.employees[team] || [];
+                teamEmployees.forEach((_, empIdx) => {
+                    const key = `${team}_${empIdx}_${currentEdit.dateKey}`;
+                    status === 'RESET' ? delete state.overrides[key] : state.overrides[key] = { status, extra };
+                });
+            });
+            syncToFirebase(); closeModal('dateBulkModal');
+        };
+
+        window.closeModal = function(id) { document.getElementById(id).classList.add('hidden'); currentEdit = null; };
+    </script>
+</body>
+</html>
